@@ -41,7 +41,7 @@ Here's a test case combining said struct with a struct that always evaluates to 
         assert_eq!(response.status(), StatusCode::OK);
     }
 ```
-You can nest your combinators to arbitray depths
+You can nest your combinators to arbitrary depths
 ```rust
  #[tokio::test]
     async fn test_happy_nested() {
