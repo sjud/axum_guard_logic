@@ -13,7 +13,6 @@ use tower_layer::Layer;
 use tower_service::Service;
 use http::{Request, StatusCode};
 use async_trait::async_trait;
-use either::Either;
 /*
     .layer(GuardLayer::with(A{a_data}.and(B{b_data}.or(C{c_data}))))
     = And(A,Or(B,C))
@@ -424,8 +423,8 @@ pub mod tests {
         let app = Router::new()
             .route("/",get(ok
                 .layer(GuardLayer::with(
-                    Never.or(
-                        Always.and(
+                        Never.or(
+                    Always.and(
                             Always.or(
                                 Never)))))));
         let response = app
