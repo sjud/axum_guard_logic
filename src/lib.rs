@@ -1,5 +1,5 @@
 #![feature(pin_macro)]
-
+#![feature(async_closure)]
 use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
@@ -24,14 +24,11 @@ pub trait Guard {
     fn check_guard(&self, expected:&Self) -> bool;
 }
 
-/// An extension trait for `Guard`.
 pub trait GuardExt<B>: Guard + Sized + Clone + FromRequest<B> {
-    /// Perform `and` operator on two rules
     fn and<Right: Guard + Clone + FromRequest<B>>(self, other: Right) -> And<Self, Right,B> {
         And(self, other,PhantomData)
     }
 
-    /// Perform `or` operator on two rules
     fn or<Right: Guard + Clone + FromRequest<B>>(self, other: Right) -> Or<Self, Right,B> {
         Or(self, other,PhantomData)
     }
@@ -190,11 +187,12 @@ impl<G,B,S,ResBody> Service<Request<B>> for GuardService<S,B,G>
             parts,
             // This is safe because GuardLayer can only be initialized from
             // It's guard layer with implementation, which requires a non option value.
-            expected_guard:self.expected_guard.take(),
+            expected_guard:self.expected_guard.take().unwrap(),
             service:inner,
         }
     }
 }
+
 #[pin_project::pin_project]
 pub struct GuardFuture<G,S,B,ResBody>
     where
@@ -203,7 +201,7 @@ pub struct GuardFuture<G,S,B,ResBody>
         S: Service<Request<B>, Response = Response<ResBody>>, {
 
     parts:Option<RequestParts<B>>,
-    expected_guard:Option<G>,
+    expected_guard:G,
     service: S,
 }
 
@@ -215,33 +213,35 @@ impl<G,S,B,ResBody> Future for GuardFuture<G,S,B,ResBody> where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
-        let mut parts = this.parts.take().unwrap();
-        let expected = this.expected_guard.take().unwrap();
-        match pin!(parts.extract::<G>()).poll(cx) {
-            Poll::Ready(resp) => {
-                match resp {
-                    Ok(real_value) => {
-                        if real_value.check_guard(&expected) {
-                        } else {
+        let expected = this.expected_guard;
+        if let Some(parts) = this.parts {
+            match pin!(parts.extract::<G>()).poll(cx) {
+                Poll::Pending => {return Poll::Pending;},
+                Poll::Ready(result) => {
+                    match result {
+                        Ok(guard) => {
+                            if guard.check_guard(&expected) {}
+                            else {
+                                let mut res = Response::new(ResBody::default());
+                                *res.status_mut() = StatusCode::UNAUTHORIZED;
+                                return Poll::Ready(Ok(res));
+                            }
+                        },
+                        Err(_) => {
                             let mut res = Response::new(ResBody::default());
-                            *res.status_mut() = StatusCode::UNAUTHORIZED;
+                            *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                             return Poll::Ready(Ok(res));
                         }
-                    },
-                    Err(err) => {
-                        let mut res = Response::new(ResBody::default());
-                        *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-                        return Poll::Ready(Ok(res));
-                    },
+                    }
                 }
-            },
-            Poll::Pending => {
-                return Poll::Pending;
-            }
-
+            };
+            let req = this.parts.take().unwrap().try_into_request().unwrap();
+            pin!(this.service.call(req)).poll(cx)
+        } else {
+            let mut res = Response::new(ResBody::default());
+            *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
+            Poll::Ready(Ok(res))
         }
-        let req = parts.try_into_request().unwrap();
-        pin!(this.service.call(req)).poll(cx)
     }
 }
 
@@ -259,6 +259,7 @@ pub mod tests {
     use http::StatusCode;
     use tower::util::ServiceExt;
     use axum::BoxError;
+    use axum::middleware::Next;
     use tower::{service_fn, ServiceBuilder};
 
     use super::*;
@@ -459,17 +460,17 @@ pub mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
-
+    async fn time_time<B>(req: Request<B>, next: Next<B>) -> Result<Response, StatusCode> {
+        std::thread::sleep(Duration::from_millis(500));
+        Ok(next.run(req).await)
+    }
     #[tokio::test]
-    async fn happy_with_timeout() {
-        let timer_layered = ServiceBuilder::new()
-            .layer(service_fn(async move ||{
-                std::thread::sleep(Duration::from_millis(500));
-                Ok(())
-            }))
-            .layer(GuardLayer::with(Always));
+    async fn test_happy_with_time_time() {
         let app = Router::new()
-            .route("/",get(ok));
+            .route("/",get(ok))
+            .layer(axum::middleware::from_fn(time_time))
+            .layer(GuardLayer::with(Always))
+            .layer(axum::middleware::from_fn(time_time));
         let response = app
             .oneshot(
                 Request::builder()
