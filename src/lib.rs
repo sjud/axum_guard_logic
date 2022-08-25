@@ -19,6 +19,26 @@ use async_trait::async_trait;
 */
 
 
+/// Implement Guard for a `Type{data:Data}` that implements FromRequest.
+/// Then create a `GuardLayer::with(Type{data:Data{...})`
+/// layered on the route you want to protect.
+/// The data given inside `GuardLayer::with()` will then be the
+/// expected data you write your `check_guard()` method for.
+/// ```
+/// use axum_guard_combinator::Guard;
+///
+/// #[derive(Clone,Debug,PartialEq)]
+///     pub struct ArbitraryData{
+///         data:String,
+///     }
+///
+/// impl Guard for ArbitraryData{
+///         fn check_guard(&self, expected: &Self) -> bool {
+///             *self == *expected
+///         }
+///     }
+///
+/// ```
 pub trait Guard {
     fn check_guard(&self, expected:&Self) -> bool;
 }
@@ -185,7 +205,7 @@ impl<G,B,S,ResBody> Service<Request<B>> for GuardService<S,B,G>
         GuardFuture{
             parts,
             // This is safe because GuardLayer can only be initialized from
-            // It's guard layer with implementation, which requires a non option value.
+            // It's with method, which requires a non option value.
             expected_guard:self.expected_guard.take().unwrap(),
             service:inner,
         }
