@@ -1,4 +1,6 @@
 # axum_guard_combinator
+https://crates.io/crates/axum_guard_combinator
+
 This library lets you write logical (OR, AND) combinators inside Tower Service Layers in Axum servers, 
 which extract the given type T which implement Guard and checks the value of Type T
 against the input value inside the layer's combinator.
