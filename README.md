@@ -1,6 +1,6 @@
 # axum_guard_combinator
-This library lets you write logical (OR, AND) combinators inside tower service layers, 
-which extract the given type T which implements Guard and checks the value of Type T
+This library lets you write logical (OR, AND) combinators inside Tower Service Layers in Axum servers, 
+which extract the given type T which implement Guard and checks the value of Type T
 against the input value inside the layer's combinator.
 Here's a struct which always evaluates to true.
 ```rust
