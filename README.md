@@ -3,7 +3,7 @@ https://crates.io/crates/axum_guard_combinator
 
 Combine types that implement FromRequestParts and Guard with logical combinator inside Router layers.
 Supply expected input inside of your layers and check the values extracted from requests against expected(supplied) values
-inside you Guard implementation for said types.
+inside your Guard implementation for said types.
 
 ```rust
 #[derive(Clone,Copy,Debug,PartialEq)]
