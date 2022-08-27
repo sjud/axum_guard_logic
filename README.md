@@ -1,4 +1,4 @@
-# axum_guard_combinator
+# axum_guard_logic
 https://crates.io/crates/axum_guard_logic
 
 Combine types that implement FromRequestParts and Guard with logic inside Router layers.
