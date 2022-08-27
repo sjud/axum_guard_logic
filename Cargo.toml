@@ -1,6 +1,6 @@
 [package]
-name = "axum_guard_combinator"
-version = "0.2.0"
+name = "axum_guard_logic"
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "Use logical combinator to combine types that implement from request."
