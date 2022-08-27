@@ -7,14 +7,17 @@ description = "Use logical combinator to combine types that implement from reque
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-axum-core = "0.2.7"
+axum-core = "0.3.0-rc.1"
 tower-layer = "0.3.1"
 tower-service = "0.3.2"
 async-trait = "0.1.57"
 pin-project = "1.0.11"
 http = "0.2.8"
-
+axum = {version="0.6.0-rc.1",features=["headers"]}
+futures-core = "0.3.23"
+futures = "0.3.23"
 [dev-dependencies]
 tower = "0.4.13"
 tokio = {version="1.20.1",features=["full"]}
-axum = "0.5.15"
+axum = "0.6.0-rc.1"
+tower-http = {version="0.3.4",features=["timeout"]}
