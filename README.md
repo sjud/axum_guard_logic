@@ -1,10 +1,6 @@
 # axum_guard_combinator
 https://crates.io/crates/axum_guard_combinator
-
-This library lets you write logical (OR, AND) combinators inside Tower Service Layers in Axum servers, 
-which extract the given type T which implement Guard and checks the value of Type T
-against the input value inside the layer's combinator.
-Here's a struct which always evaluates to true.
+Combine types that implement FromRequestParts and Guard with logical combinator inside router layers.
 ```rust
 #[derive(Clone,Copy,Debug,PartialEq)]
     pub struct Always;
@@ -15,17 +11,14 @@ Here's a struct which always evaluates to true.
         }
     }
     #[async_trait::async_trait]
-    impl<B:Send+Sync> FromRequest<B> for Always {
+    impl<State:Send+Sync> FromRequestParts<State> for Always {
         type Rejection = ();
 
-        async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
             Ok(Self)
         }
     }
-```
-Here's a test case combining said struct with a struct that always evaluates to false
-```rust
- #[tokio::test]
+#[tokio::test]
     async fn test_or_happy_path() {
         let app = Router::new()
             .route("/",get(ok
@@ -42,7 +35,9 @@ Here's a test case combining said struct with a struct that always evaluates to 
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
 ```
+
 You can nest your combinators to arbitrary depths
 ```rust
  #[tokio::test]
