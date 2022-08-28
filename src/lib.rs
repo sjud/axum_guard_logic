@@ -307,6 +307,7 @@ pub mod tests {
             Ok(Self)
         }
     }
+    #[axum_macros::debug_handler]
     async fn ok() -> StatusCode { StatusCode::OK }
 
     #[tokio::test]
@@ -551,6 +552,22 @@ pub mod tests {
         let app = Router::with_state(state)
             .route("/",get(ok))
             .layer(GuardLayer::with(state,StateGuardData(true)));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    #[tokio::test]
+    async fn layered_handler() {
+        let layered = ok.layer(GuardLayer::with((),Always));
+        let app = Router::new()
+            .route("/",get(layered));
         let response = app
             .oneshot(
                 Request::builder()
