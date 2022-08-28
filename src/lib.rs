@@ -1,23 +1,14 @@
-#![feature(pin_macro)]
-#![feature(async_closure)]
-
+use std::task::{Poll,Context};
+use std::mem::replace;
 use std::fmt::Debug;
-use std::future::Future;
 use std::marker::PhantomData;
-use std::mem;
-use std::pin::{Pin, pin};
-use std::process::Output;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, ready};
 use axum_core::extract::{FromRequestParts};
 use axum_core::response::{IntoResponse, Response};
 use tower_layer::Layer;
 use tower_service::Service;
 use http::{Request, StatusCode};
 use async_trait::async_trait;
-use std::ops::DerefMut;
 use http::request::Parts;
-use axum::extract::TypedHeader;
 use axum::RequestPartsExt;
 use futures_core::future::BoxFuture;
 /*
@@ -211,7 +202,7 @@ impl<G,S,ResBody,B> Service<Request<B>> for GuardService<S,G,B>
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let expected = self.expected_guard.take().unwrap();
         let clone = self.inner.clone();
-        let mut inner = mem::replace(&mut self.inner, clone);
+        let mut inner = replace(&mut self.inner, clone);
         Box::pin(
         async move {
             let (mut parts,body) = req.into_parts();
