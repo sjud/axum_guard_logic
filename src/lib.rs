@@ -23,174 +23,182 @@ use futures_core::future::BoxFuture;
 /// The data given inside `GuardLayer::with()` will then be the
 /// expected data you write your `check_guard()` method for.
 /// ```
-/// use axum_guard_combinator::Guard;
+/// use axum_guard_logic::Guard;
 ///
 /// #[derive(Clone,Debug,PartialEq)]
 ///     pub struct ArbitraryData{
 ///         data:String,
 ///     }
 ///
-/// impl Guard for ArbitraryData{
+/// impl Guard<()> for ArbitraryData{
 ///         fn check_guard(&self, expected: &Self) -> bool {
 ///             *self == *expected
 ///         }
 ///     }
 ///
 /// ```
-pub trait Guard {
+pub trait Guard<State> {
     fn check_guard(&self, expected:&Self) -> bool;
 }
 
-pub trait GuardExt: Guard + Sized + Clone + FromRequestParts<()> {
-    fn and<Right: 'static + Guard + Clone + FromRequestParts<()>>(self, other: Right)
-        -> And<Self, Right> {
-        And(self, other)
+pub trait GuardExt<State>: Guard<State> + Sized + Clone + FromRequestParts<State> {
+    fn and<Right: 'static + Guard<State> + Clone + FromRequestParts<State>>(self, other: Right)
+        -> And<Self, Right,State> {
+        And(self, other,PhantomData)
     }
 
-    fn or<Right: 'static + Guard + Clone + FromRequestParts<()>>(self, other: Right)
-        -> Or<Self, Right> {
-        Or(self, other)
+    fn or<Right: 'static + Guard<State> + Clone + FromRequestParts<State>>(self, other: Right)
+        -> Or<Self, Right,State> {
+        Or(self, other,PhantomData)
     }
 }
-impl<T: Guard + Clone + FromRequestParts<()>> GuardExt for T {}
+impl<State,T: Guard<State> + Clone + FromRequestParts<State>> GuardExt<State> for T {}
 
-pub struct And<Left,Right>(Left, Right) where
-    Left:'static + Guard + Clone + FromRequestParts<()>,
-    Right: 'static + Guard + Clone + FromRequestParts<()>;
+pub struct And<Left,Right,State>(Left, Right, PhantomData<State>) where
+    Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+    Right: 'static + Guard<State> + Clone + FromRequestParts<State>;
 
-impl<Left,Right> Clone for And<Left,Right>
+impl<Left,Right,State> Clone for And<Left,Right,State>
     where
-        Left:'static + Guard + Clone + FromRequestParts<()>,
-        Right: 'static + Guard + Clone + FromRequestParts<()> {
+        Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+        Right: 'static + Guard<State> + Clone + FromRequestParts<State> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(),self.1.clone())
+        Self(self.0.clone(),self.1.clone(),PhantomData)
     }
 }
 
-impl<Left,Right> Guard for And<Left,Right>where
-    Left:'static + Guard + Clone + FromRequestParts<()>,
-    Right: 'static + Guard + Clone + FromRequestParts<()> {
+impl<Left,Right,State> Guard<State> for And<Left,Right,State>where
+    Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+    Right: 'static + Guard<State> + Clone + FromRequestParts<State> {
     fn check_guard(&self, expected: &Self) -> bool {
         self.0.check_guard(&expected.0) && self.1.check_guard(&expected.1)
     }
 }
 
 #[async_trait::async_trait]
-impl<Left,Right,State> FromRequestParts<State> for And<Left,Right>
+impl<Left,Right,State> FromRequestParts<State> for And<Left,Right,State>
     where
         State:Send+Sync,
-        Left:'static + Guard + Clone + FromRequestParts<()> + Send,
-        Right: 'static + Guard + Clone + FromRequestParts<()> + Send{
+        Left:'static + Guard<State> + Clone + FromRequestParts<State> + Send,
+        Right: 'static + Guard<State> + Clone + FromRequestParts<State> + Send{
     type Rejection = StatusCode;
 
     async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
-        let left = parts.extract::<Left>().await
+        let left = Left::from_request_parts(parts,state).await
             .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
-        let right = parts.extract::<Right>().await
+        let right = Right::from_request_parts(parts,state).await
             .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(Self(left,right))
+        Ok(Self(left,right,PhantomData))
     }
 }
 
 
-pub struct Or<Left,Right>(Left, Right) where
-    Left:'static + Guard + Clone + FromRequestParts<()>,
-    Right: 'static + Guard + Clone + FromRequestParts<()>;
+pub struct Or<Left,Right,State>(Left, Right,PhantomData<State>) where
+    Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+    Right: 'static + Guard<State> + Clone + FromRequestParts<State>;
 
-impl<Left,Right> Clone for Or<Left,Right>
+impl<Left,Right,State> Clone for Or<Left,Right,State>
     where
-        Left:'static + Guard + Clone + FromRequestParts<()>,
-        Right: 'static + Guard + Clone + FromRequestParts<()> {
+        Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+        Right: 'static + Guard<State> + Clone + FromRequestParts<State> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(),self.1.clone())
+        Self(self.0.clone(),self.1.clone(),PhantomData)
     }
 }
 
-impl<Left, Right> Guard for Or<Left, Right> where
-    Left:'static + Guard + Clone + FromRequestParts<()>,
-    Right: 'static + Guard + Clone + FromRequestParts<()> {
+impl<Left, Right,State> Guard<State> for Or<Left, Right,State> where
+    Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+    Right: 'static + Guard<State> + Clone + FromRequestParts<State> {
     fn check_guard(&self, expected: &Self) -> bool {
         self.0.check_guard(&expected.0) || self.1.check_guard(&expected.1)
     }
 }
 
 #[async_trait::async_trait]
-impl<Left,Right,State> FromRequestParts<State> for Or<Left,Right>
+impl<Left,Right,State> FromRequestParts<State> for Or<Left,Right,State>
     where
         State:Send+Sync,
-        Left:'static + Guard + Clone + FromRequestParts<()> + Send,
-        Right: 'static + Guard + Clone + FromRequestParts<()> + Send{
+        Left:'static + Guard<State> + Clone + FromRequestParts<State> + Send,
+        Right: 'static + Guard<State> + Clone + FromRequestParts<State> + Send{
     type Rejection = StatusCode;
 
 
     async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
-        let left = parts.extract::<Left>().await
+        let left = Left::from_request_parts(parts,state).await
             .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
-        let right = parts.extract::<Right>().await
+        let right = Right::from_request_parts(parts,state).await
             .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
-        Ok(Self(left,right))
+        Ok(Self(left,right,PhantomData))
     }
 }
 
-pub struct GuardLayer<G,B> {
+pub struct GuardLayer<G,B,State> {
     expected_guard: Option<G>,
+    state:State,
     _marker: PhantomData<B>,
 }
 
-impl<G,B> GuardLayer<G,B>{
-    pub fn with(expected_guard:G) -> Self {
+impl<G,B,State> GuardLayer<G,B,State>{
+    pub fn with(state:State,expected_guard:G) -> Self {
         Self{
+            state,
             expected_guard:Some(expected_guard),
             _marker: PhantomData
         }
     }
 }
 
-impl<S,B,G> Layer<S> for GuardLayer<G,B>
+impl<S,B,G,State> Layer<S> for GuardLayer<G,B,State>
     where
+        State:Clone,
         S: Service<Request<B>> + Clone + Send,
         B: Send + Sync,
-        G: Guard + FromRequestParts<()> + Send + Sync + Clone{
-    type Service = GuardService<S,G,B>;
+        G: Guard<State> + FromRequestParts<State> + Send + Sync + Clone{
+    type Service = GuardService<S,G,B,State>;
 
     fn layer(&self, inner: S) -> Self::Service {
         GuardService{
             expected_guard: self.expected_guard.clone(),
+            state:self.state.clone(),
             inner,
             _marker: PhantomData
         }
     }
 }
 
-pub struct GuardService<S,G,B>
+pub struct GuardService<S,G,B,State>
     where
         S: Service<Request<B>> + Clone + Send,
         B: Send + Sync,
-        G: Guard + FromRequestParts<()> + Send + Sync + Clone {
+        G: Guard<State> + FromRequestParts<State> + Send + Sync + Clone {
     expected_guard:Option<G>,
+    state:State,
     inner:S,
     _marker:PhantomData<B>,
 }
-impl<S,G,B> Clone for GuardService<S,G,B>
+impl<S,G,B,State> Clone for GuardService<S,G,B,State>
     where
+        State:Clone,
         S: Service<Request<B>> + Clone + Send,
         B: Send + Sync,
-        G: Guard + FromRequestParts<()> + Send + Sync + Clone{
+        G: Guard<State> + FromRequestParts<State> + Send + Sync + Clone{
     fn clone(&self) -> Self {
         Self{
             expected_guard: self.expected_guard.clone(),
             inner: self.inner.clone(),
+            state: self.state.clone(),
             _marker: PhantomData
         }
     }
 }
 
-impl<G,S,ResBody,B> Service<Request<B>> for GuardService<S,G,B>
+impl<G,S,ResBody,B,State> Service<Request<B>> for GuardService<S,G,B,State>
     where
+        State:Send+Sync+Clone+'static,
         ResBody:Default,
         S: Service<Request<B>, Response = Response<ResBody>> + Clone + Send + 'static,
         <S as Service<Request<B>>>::Future:Send,
-        G: Guard + FromRequestParts<()> + Sync + Send + Clone + 'static,
+        G: Guard<State> + FromRequestParts<State> + Sync + Send + Clone + 'static,
         B: Send + Sync + 'static, {
     type Response = S::Response;
     type Error = S::Error;
@@ -203,12 +211,13 @@ impl<G,S,ResBody,B> Service<Request<B>> for GuardService<S,G,B>
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let expected = self.expected_guard.take().unwrap();
         let clone = self.inner.clone();
+        let state = self.state.clone();
         let mut inner = replace(&mut self.inner, clone);
         Box::pin(
         async move {
             let (mut parts,body) = req.into_parts();
             let guard : G = match
-                G::from_request_parts(&mut parts,&()).await {
+                G::from_request_parts(&mut parts,&state).await {
                 Ok(guard) => guard,
                 Err(_) => {
                     let mut res = Response::new(ResBody::default());
@@ -251,16 +260,16 @@ pub mod tests {
     pub struct ArbitraryData{
         data:String,
     }
-    impl Guard for ArbitraryData{
+    impl Guard<()> for ArbitraryData{
         fn check_guard(&self, expected: &Self) -> bool {
             *self == *expected
         }
     }
     #[async_trait::async_trait]
-    impl<State:Send+Sync> FromRequestParts<State> for ArbitraryData {
+    impl FromRequestParts<()> for ArbitraryData {
         type Rejection = ();
 
-        async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
+        async fn from_request_parts(parts: &mut Parts, state: &()) -> Result<Self, Self::Rejection> {
             Ok(Self{
                 data: parts.headers.get("data").unwrap()
                     .to_str().unwrap().to_string()
@@ -270,31 +279,31 @@ pub mod tests {
     #[derive(Clone,Copy,Debug,PartialEq)]
     pub struct Always;
 
-    impl Guard for Always {
+    impl Guard<()> for Always {
         fn check_guard(&self,_:&Self) -> bool {
             true
         }
     }
     #[async_trait::async_trait]
-    impl<State:Send+Sync> FromRequestParts<State> for Always {
+    impl FromRequestParts<()> for Always {
         type Rejection = ();
 
-        async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
+        async fn from_request_parts(parts: &mut Parts, state: &()) -> Result<Self, Self::Rejection> {
             Ok(Self)
         }
     }
     #[derive(Clone,Copy,Debug,PartialEq)]
     pub struct Never;
-    impl Guard for Never {
+    impl Guard<()> for Never {
         fn check_guard(&self, expected: &Self) -> bool {
             false
         }
     }
     #[async_trait::async_trait]
-    impl<State:Send+Sync> FromRequestParts<State> for Never {
+    impl FromRequestParts<()> for Never {
         type Rejection = ();
 
-        async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
+        async fn from_request_parts(parts: &mut Parts, state: &()) -> Result<Self, Self::Rejection> {
             Ok(Self)
         }
     }
@@ -304,7 +313,7 @@ pub mod tests {
     async fn test_always() {
         let app = Router::new()
             .route("/",get(ok))
-            .layer(GuardLayer::with(Always));
+            .layer(GuardLayer::with((),Always));
         let response = app
             .oneshot(
                 Request::builder()
@@ -322,7 +331,7 @@ pub mod tests {
     async fn test_never() {
         let app = Router::new()
             .route("/",get(ok))
-            .layer(GuardLayer::with(Never));
+            .layer(GuardLayer::with((),Never));
         let response = app
             .oneshot(
                 Request::builder()
@@ -339,7 +348,7 @@ pub mod tests {
     async fn test_and_happy_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(Always.and(Always))));
+                .layer(GuardLayer::with((),Always.and(Always))));
         let response = app
             .oneshot(
                 Request::builder()
@@ -356,7 +365,7 @@ pub mod tests {
     async fn test_and_sad_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(Always.and(Never))));
+                .layer(GuardLayer::with((),Always.and(Never))));
         let response = app
             .oneshot(
                 Request::builder()
@@ -373,7 +382,7 @@ pub mod tests {
     async fn test_or_happy_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(Always.or(Never))));
+                .layer(GuardLayer::with((),Always.or(Never))));
         let response = app
             .oneshot(
                 Request::builder()
@@ -390,7 +399,7 @@ pub mod tests {
     async fn test_or_sad_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(Never.or(Never))));
+                .layer(GuardLayer::with((),Never.or(Never))));
         let response = app
             .oneshot(
                 Request::builder()
@@ -407,7 +416,7 @@ pub mod tests {
     async fn test_happy_nested() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(
+                .layer(GuardLayer::with((),
                         Never.or(
                     Always.and(
                             Always.or(
@@ -428,7 +437,7 @@ pub mod tests {
     async fn test_or_happy_path_with_data() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with(ArbitraryData{
+                .layer(GuardLayer::with((),ArbitraryData{
                     data:String::from("Hello World.")
                 })));
         let response = app
@@ -447,11 +456,11 @@ pub mod tests {
     #[tokio::test]
     async fn test_duplicate_layers_with_data() {
         let layers = ServiceBuilder::new()
-            .layer(GuardLayer::with(ArbitraryData{
+            .layer(GuardLayer::with((),ArbitraryData{
                 data:String::from("Hello World.")
             }))
             .layer(
-                GuardLayer::with(ArbitraryData{
+                GuardLayer::with((),ArbitraryData{
                     data:String::from("Should fail.")}));
         let app = Router::new()
             .route("/",get(ok))
@@ -482,7 +491,7 @@ pub mod tests {
         let app = Router::new()
             .route("/",get(ok))
             .layer(axum::middleware::from_fn(time_time))
-            .layer(GuardLayer::with(Always))
+            .layer(GuardLayer::with((),Always))
             .layer(axum::middleware::from_fn(time_time))
             .layer(tower_http::timeout::TimeoutLayer::new(Duration::from_secs(1)));
         let response = app
@@ -495,6 +504,62 @@ pub mod tests {
             .await
             .unwrap();
 
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[derive(Copy,Clone,Debug)]
+    pub struct StateGuardData(bool);
+
+    impl Guard<State> for StateGuardData {
+        fn check_guard(&self, expected: &Self) -> bool {
+            self.0 == expected.0
+        }
+    }
+    #[async_trait::async_trait]
+    impl FromRequestParts<State> for StateGuardData {
+        type Rejection = ();
+
+        async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
+            Ok(Self(state.0))
+        }
+    }
+
+    #[derive(Copy,Clone,Debug)]
+    pub struct State(bool);
+
+    #[tokio::test]
+    async fn test_with_state_fail() {
+        let state = State(false);
+        let app = Router::with_state(state)
+            .route("/",get(ok))
+            .layer(GuardLayer::with(state,StateGuardData(true)));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    }
+    #[tokio::test]
+    async fn test_with_state_pass() {
+        let state = State(true);
+        let app = Router::with_state(state)
+            .route("/",get(ok))
+            .layer(GuardLayer::with(state,StateGuardData(true)));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
 
