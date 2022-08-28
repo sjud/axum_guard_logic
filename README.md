@@ -4,6 +4,7 @@ https://crates.io/crates/axum_guard_logic
 Combine types that implement FromRequestParts and Guard with logic inside Router layers.
 Supply expected input inside of your layers and check the values extracted from requests against expected(supplied) values
 inside your Guard implementation for said types.
+If check_guard returns false, this layer doesn't process the inside service and instead returns Status UNAUTHORIZED
 
 ```rust
 #[derive(Clone,Copy,Debug,PartialEq)]
