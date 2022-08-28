@@ -26,7 +26,8 @@ use futures_core::future::BoxFuture;
 */
 
 
-/// Implement Guard for a `Type{data:Data}` that implements FromRequestParts.State/// Then create a `GuardLayer::with(Type{data:Data{...})`
+/// Implement Guard for a `Type{data:Data}` that implements FromRequestParts.State
+/// Then create a `GuardLayer::with(Type{data:Data{...})`
 /// layered on the route you want to protect.
 /// The data given inside `GuardLayer::with()` will then be the
 /// expected data you write your `check_guard()` method for.
