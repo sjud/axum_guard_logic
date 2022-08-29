@@ -11,32 +11,8 @@ use async_trait::async_trait;
 use http::request::Parts;
 use axum::RequestPartsExt;
 use futures_core::future::BoxFuture;
-/*
-    .layer(GuardLayer::with(A{a_data}.and(B{b_data}.or(C{c_data}))))
-    = And(A,Or(B,C))
-*/
 
 
-/// Implement Guard for a `Type{data:Data}` that implements FromRequestParts.State
-/// Then create a `GuardLayer::with(Type{data:Data{...})`
-/// layered on the route you want to protect.
-/// The data given inside `GuardLayer::with()` will then be the
-/// expected data you write your `check_guard()` method for.
-/// ```
-/// use axum_guard_logic::Guard;
-///
-/// #[derive(Clone,Debug,PartialEq)]
-///     pub struct ArbitraryData{
-///         data:String,
-///     }
-///
-/// impl Guard<()> for ArbitraryData{
-///         fn check_guard(&self, expected: &Self) -> bool {
-///             *self == *expected
-///         }
-///     }
-///
-/// ```
 pub trait Guard<State> {
     fn check_guard(&self, expected:&Self) -> bool;
 }
