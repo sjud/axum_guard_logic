@@ -853,6 +853,7 @@ pub mod tests {
                     .and_with_sub_state::<State,_>(StateGuardData(true))
                     .or_with_sub_state::<OtherState,_>(StringGuard("Nope.".into()))
                     .or_with_sub_state::<OtherState,_>(StringGuard("But actually yes.".into()))
+                    .or(OtherStateGuardData(false,"Still yes, yay logic".into()))
                     .and_with_sub_state::<OtherState,_>(StringGuard("But not really.".into()))
             ));
         let response = app
@@ -866,8 +867,36 @@ pub mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+    #[tokio::test]
+    async fn more_deep_all_with_substate_happy() {
+        let state = State(true);
+        let other_state = OtherState("But actually yes.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),
+                OtherStateGuardData(true,"Hello world.".into())
+                    .and_with_sub_state::<State,_>(StateGuardData(true))
+                    .and_with_sub_state::<State,_>(StateGuardData(true))
+                    .or_with_sub_state::<OtherState,_>(StringGuard("Nope.".into()))
+                    .or_with_sub_state::<OtherState,_>(StringGuard("But actually yes.".into()))
+                    .or(OtherStateGuardData(false,"Still yes, yay logic".into()))
+                    .and(OtherStateGuardData(true,"But actually yes.".into()))
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 
-    /*
+    /* DOESN'T COMPILE
     #[tokio::test]
     async fn layered_handler() {
         let layered = ok.layer(GuardLayer::with((),Always));
@@ -883,6 +912,6 @@ pub mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-    }*/
-
+    }
+    */
 }
