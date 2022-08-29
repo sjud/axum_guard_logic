@@ -84,6 +84,7 @@ impl<Left, Right, State, SubState> Guard<State> for OrWithSubState<Left, Right, 
         self.0.check_guard(&expected.0) || self.1.check_guard(&expected.1)
     }
 }
+
 pub struct AndWithSubState<Left,Right,State,SubState>(Left,Right,PhantomData<(State,SubState)>)
     where
         Left:'static + Guard<State> + Clone + FromRequestParts<State>,
@@ -97,6 +98,7 @@ impl<Left,Right,State,SubState> Clone for AndWithSubState<Left,Right,State,SubSt
         Self(self.0.clone(),self.1.clone(),PhantomData)
     }
 }
+
 #[async_trait::async_trait]
 impl<Left,Right,State,SubState> FromRequestParts<State> for AndWithSubState<Left,Right,State,SubState>
     where
@@ -205,6 +207,25 @@ impl<Left,Right,State> FromRequestParts<State> for Or<Left,Right,State>
         let right = Right::from_request_parts(parts,state).await
             .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
         Ok(Self(left,right,PhantomData))
+    }
+}
+
+#[derive(Copy,Clone)]
+pub struct DummyStart;
+
+#[async_trait::async_trait]
+impl<S> FromRequestParts<S> for DummyStart
+    where
+    S: Sync,{
+    type Rejection = ();
+
+    async fn from_request_parts(_: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self)
+    }
+}
+impl<S> Guard<S> for DummyStart {
+    fn check_guard(&self, _: &Self) -> bool {
+        true
     }
 }
 
@@ -871,7 +892,29 @@ pub mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-
+    #[tokio::test]
+    async fn all_guards_are_substates_happy() {
+        let state = State(true);
+        let other_state = OtherState("But actually yes.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),DummyStart
+                    .and_with_sub_state::<State,_>(StateGuardData(true))
+                    .or_with_sub_state::<OtherState,_>(StringGuard("But actually yes.".into()))
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
     /* DOESN'T COMPILE
     #[tokio::test]
     async fn layered_handler() {
