@@ -59,6 +59,54 @@ pub trait GuardExt<State>: Guard<State> + Sized + Clone + FromRequestParts<State
         -> Or<Self, Right,State> {
         Or(self, other,PhantomData)
     }
+
+    fn or_with_sub_state<
+        SubState:FromRef<State>,
+        Right:'static + Guard<SubState> + Clone + FromRequestParts<SubState>>
+    (self, other:Right) -> OrWithSubState<Self,Right,State,SubState>{
+        OrWithSubState(self,other,PhantomData)
+    }
+}
+pub struct OrWithSubState<Left,Right,State,SubState>(Left,Right,PhantomData<(State,SubState)>)
+    where
+        Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+        Right: 'static + Guard<SubState> + Clone + FromRequestParts<SubState>;
+
+impl<Left,Right,State,SubState> Clone for OrWithSubState<Left,Right,State,SubState>
+    where
+        Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+        Right: 'static + Guard<SubState> + Clone + FromRequestParts<SubState>{
+    fn clone(&self) -> Self {
+        Self(self.0.clone(),self.1.clone(),PhantomData)
+    }
+}
+#[async_trait::async_trait]
+impl<Left,Right,State,SubState> FromRequestParts<State> for OrWithSubState<Left,Right,State,SubState>
+    where
+        State: Send + Sync,
+        SubState:Clone + FromRef<State> + Send + Sync,
+        Left:'static + Guard<State> + Clone + FromRequestParts<State> + Send,
+        Right: 'static + Guard<SubState> + Clone + FromRequestParts<SubState> {
+    type Rejection = StatusCode;
+
+    async fn from_request_parts(parts: &mut Parts, state: &State) -> Result<Self, Self::Rejection> {
+        let left = <Left as FromRequestParts<State>>::from_request_parts(parts,state)
+            .await
+            .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
+        let right = <Right as FromRequestParts<SubState>>::from_request_parts(
+            parts,
+            &SubState::from_ref(state)).await
+            .map_err(|err|StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok(Self(left,right,PhantomData))
+    }
+}
+impl<Left, Right, State, SubState> Guard<State> for OrWithSubState<Left, Right, State, SubState>
+    where
+        Left:'static + Guard<State> + Clone + FromRequestParts<State>,
+        Right: 'static + Guard<SubState> + Clone + FromRequestParts<SubState> {
+    fn check_guard(&self, expected: &Self) -> bool {
+        self.0.check_guard(&expected.0) || self.1.check_guard(&expected.1)
+    }
 }
 pub struct AndWithSubState<Left,Right,State,SubState>(Left,Right,PhantomData<(State,SubState)>)
     where
@@ -191,7 +239,7 @@ pub struct GuardLayer<G,B,State> {
 }
 
 impl<G,B,State> GuardLayer<G,B,State>{
-    pub fn with(state:State,expected_guard:G) -> Self {
+    pub fn with(state:State, expected_guard:G) -> Self {
         Self{
             state,
             expected_guard:Some(expected_guard),
@@ -384,7 +432,7 @@ pub mod tests {
 
     impl Guard<(State,OtherState)> for OtherStateGuardData {
         fn check_guard(&self, expected: &Self) -> bool {
-            self.0 && self.1 == expected.1
+            self.0 == self.0 && self.1 == expected.1
         }
     }
     impl FromRef<(State,OtherState)> for State {
@@ -431,7 +479,7 @@ pub mod tests {
     async fn test_always() {
         let app = Router::new()
             .route("/",get(ok))
-            .layer(GuardLayer::with((),Always));
+            .layer(GuardLayer::with((), Always, ));
         let response = app
             .oneshot(
                 Request::builder()
@@ -449,7 +497,7 @@ pub mod tests {
     async fn test_never() {
         let app = Router::new()
             .route("/",get(ok))
-            .layer(GuardLayer::with((),Never));
+            .layer(GuardLayer::with((), Never, ));
         let response = app
             .oneshot(
                 Request::builder()
@@ -466,7 +514,7 @@ pub mod tests {
     async fn test_and_happy_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with((),Always.and(Always))));
+                .layer(GuardLayer::with((), Always.and(Always), )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -483,7 +531,7 @@ pub mod tests {
     async fn test_and_sad_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with((),Always.and(Never))));
+                .layer(GuardLayer::with((), Always.and(Never), )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -500,7 +548,7 @@ pub mod tests {
     async fn test_or_happy_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with((),Always.or(Never))));
+                .layer(GuardLayer::with((), Always.or(Never), )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -517,7 +565,7 @@ pub mod tests {
     async fn test_or_sad_path() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with((),Never.or(Never))));
+                .layer(GuardLayer::with((), Never.or(Never), )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -535,10 +583,11 @@ pub mod tests {
         let app = Router::new()
             .route("/",get(ok)
                 .layer(GuardLayer::with((),
-                        Never.or(
-                    Always.and(
-                            Always.or(
-                                Never))))));
+                                        Never.or(
+                                    Always.and(
+                                            Always.or(
+                                                Never))),
+                )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -555,9 +604,10 @@ pub mod tests {
     async fn test_or_happy_path_with_data() {
         let app = Router::new()
             .route("/",get(ok)
-                .layer(GuardLayer::with((),ArbitraryData{
-                    data:String::from("Hello World.")
-                })));
+                .layer(GuardLayer::with((), ArbitraryData{
+                                    data:String::from("Hello World.")
+                                },
+                )));
         let response = app
             .oneshot(
                 Request::builder()
@@ -574,12 +624,14 @@ pub mod tests {
     #[tokio::test]
     async fn test_duplicate_layers_with_data() {
         let layers = ServiceBuilder::new()
-            .layer(GuardLayer::with((),ArbitraryData{
-                data:String::from("Hello World.")
-            }))
+            .layer(GuardLayer::with((), ArbitraryData{
+                            data:String::from("Hello World.")
+                        },
+            ))
             .layer(
-                GuardLayer::with((),ArbitraryData{
-                    data:String::from("Should fail.")}));
+                GuardLayer::with((), ArbitraryData{
+                                    data:String::from("Should fail.")},
+                ));
         let app = Router::new()
             .route("/",get(ok))
             .layer(layers);
@@ -609,7 +661,7 @@ pub mod tests {
         let app = Router::new()
             .route("/",get(ok))
             .layer(axum::middleware::from_fn(time_time))
-            .layer(GuardLayer::with((),Always))
+            .layer(GuardLayer::with((), Always, ))
             .layer(axum::middleware::from_fn(time_time))
             .layer(tower_http::timeout::TimeoutLayer::new(Duration::from_secs(1)));
         let response = app
@@ -631,7 +683,7 @@ pub mod tests {
         let state = State(false);
         let app = Router::with_state(state)
             .route("/",get(ok))
-            .layer(GuardLayer::with(state,StateGuardData(true)));
+            .layer(GuardLayer::with(state, StateGuardData(true), ));
         let response = app
             .oneshot(
                 Request::builder()
@@ -649,7 +701,7 @@ pub mod tests {
         let state = State(true);
         let app = Router::with_state(state)
             .route("/",get(ok))
-            .layer(GuardLayer::with(state,StateGuardData(true)));
+            .layer(GuardLayer::with(state, StateGuardData(true), ));
         let response = app
             .oneshot(
                 Request::builder()
@@ -664,7 +716,7 @@ pub mod tests {
 
 
     #[tokio::test]
-    async fn logic_layers_with_different_states() {
+    async fn logic_layers_and_with_sub_states_happy() {
         let state = State(true);
         let other_state = OtherState("Hello world.".into());
         let super_state = (state,other_state);
@@ -675,7 +727,8 @@ pub mod tests {
                 OtherStateGuardData(true,"Hello world.".into())
                 .and_with_sub_state::<State, _>(StateGuardData(true))
                 .and_with_sub_state::<OtherState,_>(StringGuard("Hello world.".into())
-                )));
+                ),
+            ));
         let response = app
             .oneshot(
                 Request::builder()
@@ -687,6 +740,106 @@ pub mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
+    #[tokio::test]
+    async fn logic_layers_and_with_sub_states_sad() {
+        let state = State(true);
+        let other_state = OtherState("Hello world.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),
+                OtherStateGuardData(true,"Hello world.".into())
+                    .and_with_sub_state::<State, _>(StateGuardData(true))
+                    .and_with_sub_state::<OtherState,_>(StringGuard("GOODBYE CRUEL WORLD.".into())
+                    ),
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    #[tokio::test]
+    async fn or_with_substate_happy() {
+        let state = State(true);
+        let other_state = OtherState("Hello world.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),
+                OtherStateGuardData(false,"BAD DATA.".into())
+                    .or_with_sub_state::<State,_>(StateGuardData(true))
+                     ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn or_with_substate_sad() {
+        let state = State(true);
+        let other_state = OtherState("Hello world.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),
+                OtherStateGuardData(false,"BAD DATA.".into())
+                    .or_with_sub_state::<State,_>(StateGuardData(false))
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn deep_all_with_substate() {
+        let state = State(true);
+        let other_state = OtherState("But actually yes.".into());
+        let super_state = (state,other_state);
+        let app = Router::with_state(super_state.clone())
+            .route("/",get(ok))
+            .layer(GuardLayer::with(
+                super_state.clone(),
+                OtherStateGuardData(true,"Hello world.".into())
+                    .and_with_sub_state::<State,_>(StateGuardData(true))
+                    .and_with_sub_state::<State,_>(StateGuardData(true))
+                    .or_with_sub_state::<OtherState,_>(StringGuard("Nope.".into()))
+                    .or_with_sub_state::<OtherState,_>(StringGuard("But actually yes.".into()))
+            ));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     /*
     #[tokio::test]
     async fn layered_handler() {
