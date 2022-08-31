@@ -4,14 +4,83 @@ use std::marker::{PhantomData, PhantomPinned};
 use std::pin::{Pin};
 use std::sync::{Arc, Mutex};
 use axum_core::extract::{FromRequestParts};
+use axum_core::response::IntoResponse;
 use futures_core::future::BoxFuture;
 use tower_service::Service;
-use http::{StatusCode};
+use http::{Request, StatusCode};
 use http::request::Parts;
 use tower_layer::Layer;
 
 pub trait Guard {
     fn check_guard(&self, expected:&Self) -> bool;
+}
+
+pub struct GuardLayer<GuardService>
+    where
+    GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+    + Send + Clone + 'static {
+    guard_service:GuardService,
+}
+
+impl<GuardService> GuardLayer<GuardService>
+    where
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>{
+    pub fn with(guard:GuardService) -> Self {
+        Self{ guard_service:guard }
+    }
+}
+impl<S,GuardService,ReqBody> Layer<S> for GuardLayer<GuardService>
+    where
+        S:Service<Request<ReqBody>>,
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        + Send + Clone + 'static {
+    type Service = GuardServiceWrapper<S,GuardService,ReqBody>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        GuardServiceWrapper{
+            inner,
+            guard_service:self.guard_service.clone(),
+        }
+    }
+}
+pub struct GuardServiceWrapper<S,GuardService,ReqBody>
+    where
+        S:Service<Request<ReqBody>>,
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        + Send + Clone + 'static {
+    inner:S,
+    guard_service:GuardService,
+}
+impl<S,ReqBody,GuardService,Response> Service<Request<ReqBody>> for
+GuardServiceWrapper<S,GuardService,ReqBody>
+    where
+        Response:IntoResponse,
+        S:Service<Request<ReqBody>>,
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        + Send + Clone + 'static{
+    type Response = Result<S::Response,S::Error>;
+    type Error = StatusCode;
+    type Future = BoxFuture<'static, Result<Self::Response,Self::Error>> ;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<ReqBody>) -> Self::Future {
+        Box::pin(
+            async move {
+                let (parts,body) = req.into_parts();
+                let GuardServiceResponse(result,parts) = self.guard_service.call(parts)
+                    .await?;
+                if result {
+                    self.inner.call(Request::from_parts(parts,body))
+                } else {
+                    Err(StatusCode::UNAUTHORIZED)
+                }
+            }
+        )
+
+    }
 }
 
 impl<State,G> GuardService< State,G>
