@@ -38,3 +38,4 @@ Router::new()
         .into_layer()
 );
  ```
+ Will reject `StatusCode::UNAUTHORIZED` when `check_guard` returns false.
