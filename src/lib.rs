@@ -19,11 +19,11 @@ pub trait Guard {
     fn check_guard(&self, expected:&Self) -> bool;
 }
 
-pub trait GuardServiceExt : Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Clone + Send {
+pub trait GuardServiceExt : Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Clone + Send {
     fn or<Other>(self,other:Other)
-        -> OrGuardService<Self,Other>
+                 -> OrGuardService<Self,Other>
         where
-            Other:Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Clone + Send,
+            Other:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Clone + Send,
             <Other as Service<Parts>>::Future: Send,
             <Self as Service<Parts>>::Future: Send {
         OrGuardService{
@@ -32,9 +32,9 @@ pub trait GuardServiceExt : Service<Parts, Response=GuardServiceResponse,Error=S
         }
     }
     fn and<Other>(self,other:Other)
-        -> AndGuardService<Self,Other>
+                  -> AndGuardService<Self,Other>
         where
-            Other:Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Clone + Send,
+            Other:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Clone + Send,
             <Other as Service<Parts>>::Future: Send,
             <Self as Service<Parts>>::Future: Send {
         AndGuardService{
@@ -48,19 +48,19 @@ pub trait GuardServiceExt : Service<Parts, Response=GuardServiceResponse,Error=S
 }
 impl<T> GuardServiceExt for T
     where
-        T: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Clone + Send {}
+        T: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Clone + Send {}
 
 pub struct GuardLayer<GuardService,ReqBody>
     where
-    GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
-    + Send + Clone + 'static {
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)>
+        + Send + Clone + 'static {
     guard_service:GuardService,
     _marker:PhantomData<ReqBody>
 }
 
 impl<GuardService,ReqBody> Clone for GuardLayer<GuardService,ReqBody>
     where
-        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)>
         + Send + Clone + 'static {
     fn clone(&self) -> Self {
         Self{
@@ -71,7 +71,7 @@ impl<GuardService,ReqBody> Clone for GuardLayer<GuardService,ReqBody>
 }
 impl<GuardService,ReqBody> GuardLayer<GuardService,ReqBody>
     where
-        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)>
         + Send + Clone + 'static {
     pub fn with(guard:GuardService) -> Self {
         Self{ guard_service:guard, _marker:PhantomData }
@@ -80,7 +80,7 @@ impl<GuardService,ReqBody> GuardLayer<GuardService,ReqBody>
 impl<S,GuardService,ReqBody> Layer<S> for GuardLayer<GuardService,ReqBody>
     where
         S:Service<Request<ReqBody>> + Clone,
-        GuardService:Service<Parts, Response=GuardServiceResponse,Error=StatusCode>
+        GuardService:Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)>
         + Send + Clone + 'static {
     type Service = GuardServiceWrapper<S,GuardService,ReqBody>;
 
@@ -121,7 +121,7 @@ GuardServiceWrapper<S,GuardService,ReqBody>
         S:Service<Request<ReqBody>, Response = Response, Error = Infallible> + Send + Clone + 'static,
         <S as Service<Request<ReqBody>>>::Future: Send,
         <GuardService as Service<Parts>>::Future: Send,
-        GuardService:Service<Parts, Response=GuardServiceResponse, Error = StatusCode>
+        GuardService:Service<Parts, Response=GuardServiceResponse, Error = (StatusCode,String)>
         + Send + Clone + 'static{
     type Response = Response;
     type Error = Infallible;
@@ -199,7 +199,7 @@ impl<S,ReqBody,GuardService> Future for GuardFuture<S,ReqBody,GuardService>
 impl<State,G> GuardService< State,G>
     where
         State:Clone,
-        G: Clone + FromRequestParts<State, Rejection = StatusCode> + Guard {
+        G: Clone + FromRequestParts<State, Rejection = (StatusCode,String)> + Guard {
     pub fn new(state:State,expected_guard:G) -> GuardService< State,G> {
         Self{ state, expected_guard}
     }
@@ -207,8 +207,8 @@ impl<State,G> GuardService< State,G>
 #[derive(Clone)]
 pub struct GuardService<State,G>
     where
-    State:Clone,
-    G:Clone{
+        State:Clone,
+        G:Clone{
     state:State,
     expected_guard:G,
 }
@@ -216,10 +216,10 @@ pub struct GuardService<State,G>
 
 impl<State,G> Service<Parts> for GuardService<State,G>
     where
-    State: Sync + Send + Clone + 'static,
-    G: Clone + FromRequestParts<State, Rejection = StatusCode> + Guard + Sync + Send + 'static, {
+        State: Sync + Send + Clone + 'static,
+        G: Clone + FromRequestParts<State, Rejection = (StatusCode,String)> + Guard + Sync + Send + 'static, {
     type Response = GuardServiceResponse;
-    type Error = StatusCode;
+    type Error = (StatusCode,String);
     type Future = BoxFuture<'static,Result<Self::Response,Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -230,14 +230,14 @@ impl<State,G> Service<Parts> for GuardService<State,G>
         let expected = self.expected_guard.clone();
         let state = self.state.clone();
         Box::pin(async move {
-                let result = match G::from_request_parts(&mut req, &state).await {
-                    Ok(guard) => {
-                        guard.check_guard(&expected)
-                    },
-                    Err(status) => {
-                        return Err(status);
-                    }
-                };
+            let result = match G::from_request_parts(&mut req, &state).await {
+                Ok(guard) => {
+                    guard.check_guard(&expected)
+                },
+                Err(status) => {
+                    return Err(status);
+                }
+            };
             Ok(GuardServiceResponse(result,req))
         })
     }
@@ -246,18 +246,18 @@ impl<State,G> Service<Parts> for GuardService<State,G>
 #[derive(Clone)]
 pub struct AndGuardService<S1,S2>
     where
-    S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
-    <S1 as Service<Parts>>::Future: Send,
-    S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
-    <S2 as Service<Parts>>::Future: Send,{
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
+        <S1 as Service<Parts>>::Future: Send,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
+        <S2 as Service<Parts>>::Future: Send,{
     left:S1,
     right:S2,
 }
 impl<S1,S2> AndGuardService<S1,S2>
     where
-        S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S1 as Service<Parts>>::Future: Send,
-        S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S2 as Service<Parts>>::Future: Send, {
     pub fn new(left:S1,right:S2) -> Self{
         Self{ left, right }
@@ -265,12 +265,12 @@ impl<S1,S2> AndGuardService<S1,S2>
 }
 impl<S1,S2> Service<Parts> for AndGuardService<S1,S2>
     where
-        S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S1 as Service<Parts>>::Future: Send,
-        S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S2 as Service<Parts>>::Future: Send, {
     type Response = GuardServiceResponse;
-    type Error = StatusCode;
+    type Error = (StatusCode,String);
     type Future = BoxFuture<'static,Result<Self::Response,Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -295,18 +295,18 @@ impl<S1,S2> Service<Parts> for AndGuardService<S1,S2>
 #[derive(Clone)]
 pub struct OrGuardService<S1,S2>
     where
-        S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S1 as Service<Parts>>::Future: Send,
-        S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S2 as Service<Parts>>::Future: Send,{
     left:S1,
     right:S2,
 }
 impl<S1,S2> OrGuardService<S1,S2>
     where
-        S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S1 as Service<Parts>>::Future: Send,
-        S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S2 as Service<Parts>>::Future: Send, {
     pub fn new(left:S1,right:S2) -> Self{
         Self{ left, right }
@@ -314,12 +314,12 @@ impl<S1,S2> OrGuardService<S1,S2>
 }
 impl<S1,S2> Service<Parts> for OrGuardService<S1,S2>
     where
-        S1: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S1: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S1 as Service<Parts>>::Future: Send,
-        S2: Service<Parts, Response=GuardServiceResponse,Error=StatusCode> + Send + Clone + 'static,
+        S2: Service<Parts, Response=GuardServiceResponse,Error=(StatusCode,String)> + Send + Clone + 'static,
         <S2 as Service<Parts>>::Future: Send, {
     type Response = GuardServiceResponse;
-    type Error = StatusCode;
+    type Error = (StatusCode,String);
     type Future = BoxFuture<'static,Result<Self::Response,Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -376,14 +376,14 @@ pub mod tests {
 
     #[async_trait::async_trait]
     impl FromRequestParts<ArbitraryData> for ArbitraryData {
-        type Rejection = StatusCode;
+        type Rejection = (StatusCode,String);
 
         async fn from_request_parts(parts: &mut Parts, state: &ArbitraryData) -> Result<Self, Self::Rejection> {
             Ok(Self {
                 data: parts.headers.get(state.data.clone())
-                    .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
+                    .ok_or((StatusCode::INTERNAL_SERVER_ERROR,"error".into()))?
                     .to_str()
-                    .map_err(|err| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR,"error".into()))?
                     .to_string()
             })
         }
@@ -415,7 +415,7 @@ pub mod tests {
             ArbitraryData { data: "data".into() },
             ArbitraryData { data: "other_data".into() })
             .call(parts).await;
-        assert_eq!(result.err(), Some(StatusCode::INTERNAL_SERVER_ERROR));
+        assert_eq!(result.err().map(|err|err.0), Some(StatusCode::INTERNAL_SERVER_ERROR));
     }
 
     #[tokio::test]
@@ -716,8 +716,8 @@ pub mod tests {
         let app = Router::new()
             .route("/", get(ok))
             .layer(
-                    GuardService::new(data.clone(), data.clone())
-                        .into_layer()
+                GuardService::new(data.clone(), data.clone())
+                    .into_layer()
             );
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(),StatusCode::OK)
