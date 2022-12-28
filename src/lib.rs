@@ -200,8 +200,8 @@ impl<State,G> GuardService< State,G>
     where
         State:Clone,
         G: Clone + FromRequestParts<State, Rejection = (StatusCode,String)> + Guard {
-    pub fn new(state:State,expected_guard:G) -> GuardService< State,G> {
-        Self{ state, expected_guard}
+    pub fn new(state:State,expected_guard:G,err_msg:&'static str) -> GuardService< State,G> {
+        Self{ state, expected_guard,err_msg}
     }
 }
 #[derive(Clone)]
@@ -211,6 +211,7 @@ pub struct GuardService<State,G>
         G:Clone{
     state:State,
     expected_guard:G,
+    err_msg:&'static str,
 }
 
 
@@ -229,13 +230,14 @@ impl<State,G> Service<Parts> for GuardService<State,G>
     fn call(&mut self, mut req: Parts) -> Self::Future {
         let expected = self.expected_guard.clone();
         let state = self.state.clone();
+        let err_msg = self.err_msg;
         Box::pin(async move {
             let result = match G::from_request_parts(&mut req, &state).await {
                 Ok(guard) => {
                     guard.check_guard(&expected)
                 },
                 Err(status) => {
-                    return Err(status);
+                    return Err((status.0,format!("{} {}",status.1,err_msg)));
                 }
             };
             Ok(GuardServiceResponse(result,req))
@@ -401,7 +403,7 @@ pub mod tests {
             HeaderValue::from_static("other_data"));
         assert!(GuardService::new(
             ArbitraryData { data: "data".into() },
-            ArbitraryData { data: "other_data".into() })
+            ArbitraryData { data: "other_data".into() },"err")
             .call(parts).await.unwrap().0);
     }
 
@@ -413,7 +415,7 @@ pub mod tests {
             HeaderValue::from_static("other_data"));
         let result = GuardService::new(
             ArbitraryData { data: "data".into() },
-            ArbitraryData { data: "other_data".into() })
+            ArbitraryData { data: "other_data".into() },"err")
             .call(parts).await;
         assert_eq!(result.err().map(|err|err.0), Some(StatusCode::INTERNAL_SERVER_ERROR));
     }
@@ -426,7 +428,7 @@ pub mod tests {
             HeaderValue::from_static("other_data"));
         assert!(!(GuardService::new(
             ArbitraryData { data: "data".into() },
-            ArbitraryData { data: "NOT OTHER DATA MY BAD".into() })
+            ArbitraryData { data: "NOT OTHER DATA MY BAD".into() },"err")
             .call(parts).await.unwrap().0));
     }
 
@@ -444,10 +446,10 @@ pub mod tests {
         assert!(
             AndGuardService::new(
                 GuardService::new(
-                    data.clone(), data.clone()
+                    data.clone(), data.clone(),"err"
                 ),
                 GuardService::new(
-                    other_data.clone(), other_data.clone()
+                    other_data.clone(), other_data.clone(),"err"
                 )
             ).call(parts).await.unwrap().0
         )
@@ -467,10 +469,10 @@ pub mod tests {
         assert!(
             OrGuardService::new(
                 GuardService::new(
-                    data.clone(), data.clone()
+                    data.clone(), data.clone(),"err"
                 ),
                 GuardService::new(
-                    other_data.clone(), other_data.clone()
+                    other_data.clone(), other_data.clone(),"err"
                 )
             ).call(parts).await.unwrap().0
         )
@@ -488,36 +490,36 @@ pub mod tests {
                 AndGuardService::new(
                     AndGuardService::new(
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                     ),
                     AndGuardService::new(
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         )
                     )
                 ),
                 AndGuardService::new(
                     AndGuardService::new(
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                     ),
                     AndGuardService::new(
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         ),
                         GuardService::new(
-                            data.clone(), data.clone()
+                            data.clone(), data.clone(),"err"
                         )
                     )
                 )
@@ -538,7 +540,7 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         data.clone(),
-                        data.clone()))
+                        data.clone(),"err"))
             );
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(),StatusCode::OK)
@@ -558,10 +560,10 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         data.clone(),
-                        data.clone())
+                        data.clone(),"err")
                         .or(GuardService::new(
                             ArbitraryData{data:"not_data".into()},
-                            data,
+                            data,"err"
                         ))
                 )
             );
@@ -583,10 +585,10 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         data.clone(),
-                        data.clone())
+                        data.clone(),"err")
                         .or(GuardService::new(
                             ArbitraryData{data:"not_data".into()},
-                            data,
+                            data,"err"
                         ))
                 )
             );
@@ -609,10 +611,10 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         data.clone(),
-                        data.clone())
+                        data.clone(),"err")
                         .and(GuardService::new(
                             definitely_still_data.clone(),
-                            definitely_still_data,
+                            definitely_still_data,"err"
                         ))
                 )
             );
@@ -635,10 +637,10 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         data.clone(),
-                        data.clone())
+                        data.clone(),"err")
                         .and(GuardService::new(
                             definitely_still_data.clone(),
-                            definitely_still_data,
+                            definitely_still_data,"err"
                         ))
                 )
             );
@@ -674,29 +676,29 @@ pub mod tests {
                 GuardLayer::with(
                     GuardService::new(
                         one.clone(),
-                        one.clone()).and(
+                        one.clone(),"err").and(
                         GuardService::new(
                             two.clone(),
-                            bad.clone()
+                            bad.clone(),"err"
                         ).or(
                             GuardService::new(
                                 three.clone(),
-                                bad.clone()
+                                bad.clone(),"err"
                             )
                                 .or(
                                     GuardService::new(
                                         four.clone(),
-                                        four.clone(),
+                                        four.clone(),"err"
                                     )
                                 )
                         )
                     ).and(
-                        GuardService::new(five.clone(), five.clone()
+                        GuardService::new(five.clone(), five.clone(),"err"
                         )
                     ).and(
-                        GuardService::new(six.clone(),six.clone())
+                        GuardService::new(six.clone(),six.clone(),"err")
                     )
-                        .or(GuardService::new(seven.clone(),bad.clone())))
+                        .or(GuardService::new(seven.clone(),bad.clone(),"err")))
             );
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(),StatusCode::OK)
@@ -716,7 +718,7 @@ pub mod tests {
         let app = Router::new()
             .route("/", get(ok))
             .layer(
-                GuardService::new(data.clone(), data.clone())
+                GuardService::new(data.clone(), data.clone(),"err")
                     .into_layer()
             );
         let resp = app.oneshot(req).await.unwrap();
@@ -729,7 +731,7 @@ pub mod tests {
             .layer(axum::middleware::from_fn(time_time))
             .layer(GuardLayer::with(
                 GuardService::new(
-                    ArbitraryData{data:"x".into()},ArbitraryData{data:"x".into()}
+                    ArbitraryData{data:"x".into()},ArbitraryData{data:"x".into()},"err"
                 )))
             .layer(axum::middleware::from_fn(time_time))
             .layer(tower_http::timeout::TimeoutLayer::new(Duration::from_secs(1)));
