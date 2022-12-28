@@ -138,11 +138,11 @@ GuardServiceWrapper<S,GuardService,ReqBody>
         Box::pin(async move {
             match f.await {
                 Ok(GuardServiceResponse(result,parts)) => {
-                    if result {
+                    if result.0 {
                         inner.call(Request::from_parts(parts,body))
                             .await
                     } else {
-                        Ok(StatusCode::UNAUTHORIZED.into_response())
+                        Ok((StatusCode::UNAUTHORIZED,result.1.unwrap_or_default()).into_response())
                     }
                 },
                 Err(status) => {
@@ -237,10 +237,13 @@ impl<State,G> Service<Parts> for GuardService<State,G>
                     guard.check_guard(&expected)
                 },
                 Err(status) => {
-                    return Err((status.0,format!("{} {}",status.1,err_msg)));
+                    return Err(status);
                 }
             };
-            Ok(GuardServiceResponse(result,req))
+            let err_msg = if !result {
+                Some(String::from(err_msg))
+            } else {None};
+            Ok(GuardServiceResponse((result,err_msg),req))
         })
     }
 }
@@ -285,10 +288,10 @@ impl<S1,S2> Service<Parts> for AndGuardService<S1,S2>
         Box::pin(async move {
             let GuardServiceResponse(result,parts) =
                 left.call(parts).await?;
-            if result{
+            if result.0{
                 right.call(parts).await
             } else {
-                Ok(GuardServiceResponse(false, parts, ))
+                Ok(GuardServiceResponse((false,result.1), parts, ))
             }
         })
 
@@ -334,8 +337,8 @@ impl<S1,S2> Service<Parts> for OrGuardService<S1,S2>
         Box::pin(async move {
             let GuardServiceResponse(result,parts) =
                 left.call(parts).await?;
-            if result{
-                Ok(GuardServiceResponse(true, parts))
+            if result.0{
+                Ok(GuardServiceResponse((true,None), parts))
             } else {
                 right.call(parts).await
             }
@@ -345,7 +348,7 @@ impl<S1,S2> Service<Parts> for OrGuardService<S1,S2>
 }
 
 
-pub struct GuardServiceResponse( bool, Parts);
+pub struct GuardServiceResponse( (bool,Option<String>), Parts);
 
 
 
@@ -401,10 +404,10 @@ pub mod tests {
         parts.headers.insert(
             "data",
             HeaderValue::from_static("other_data"));
-        assert!(GuardService::new(
+        assert_eq!(GuardService::new(
             ArbitraryData { data: "data".into() },
             ArbitraryData { data: "other_data".into() },"err")
-            .call(parts).await.unwrap().0);
+            .call(parts).await.unwrap().0,(true,None));
     }
 
     #[tokio::test]
@@ -426,10 +429,10 @@ pub mod tests {
         parts.headers.insert(
             "data",
             HeaderValue::from_static("other_data"));
-        assert!(!(GuardService::new(
+        assert_eq!(GuardService::new(
             ArbitraryData { data: "data".into() },
             ArbitraryData { data: "NOT OTHER DATA MY BAD".into() },"err")
-            .call(parts).await.unwrap().0));
+            .call(parts).await.unwrap().0,(false,Some("err".into())));
     }
 
     #[tokio::test]
@@ -451,7 +454,7 @@ pub mod tests {
                 GuardService::new(
                     other_data.clone(), other_data.clone(),"err"
                 )
-            ).call(parts).await.unwrap().0
+            ).call(parts).await.unwrap().0.0
         )
     }
 
@@ -474,7 +477,7 @@ pub mod tests {
                 GuardService::new(
                     other_data.clone(), other_data.clone(),"err"
                 )
-            ).call(parts).await.unwrap().0
+            ).call(parts).await.unwrap().0.0
         )
     }
 
@@ -523,7 +526,7 @@ pub mod tests {
                         )
                     )
                 )
-            ).call(parts).await.unwrap().0
+            ).call(parts).await.unwrap().0.0
         )
     }
     #[tokio::test]
